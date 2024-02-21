@@ -1,12 +1,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as xmulticall from "@argent/x-multicall";
-import { CallData, RpcProvider, uint256, Account, Call, InvokeFunctionResponse } from "starknet";
+import { CallData, RpcProvider, uint256, Account } from "starknet";
 import dotenv from "dotenv";
 
-const addresses = [
-    "0x"
-].map(address => address.toLowerCase());
+const addressesStr = `
+0x123132123123
+0x4584986748964897
+`;
+const addresses = addressesStr.split('\n')
+    .map(address => address.trim())
+    .filter(address => address.length > 0)
+    .map(address => address.toLowerCase());
+
+
 const maxClaimMulticallSize = 30;
 
 dotenv.config({ override: true });
@@ -119,6 +126,14 @@ if (alreadyClaimedAddresses.length > 0) {
 if (invalidClaimAddresses.length > 0) {
     console.log('Invalid claim addresses:', invalidClaimAddresses);
     throw new Error('Some accounts claims are invalid');
+}
+
+console.log("Press 'y' to proceed with the claiming");
+for await (const line of console) {
+    if (line === 'y') {
+        break;
+    }
+    throw new Error('Aborted');
 }
 
 const relayer = new Account(provider, address, privateKey);
