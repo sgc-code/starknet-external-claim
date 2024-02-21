@@ -1,0 +1,17 @@
+{
+  "name": "starknet-external-claim",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "claim": "bun run ./index.ts",
+    "claim-debugger": "node --loader ts-node/esm ./index.ts"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "ts-node": "^10.9.1"
+
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
