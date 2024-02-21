@@ -11,6 +11,10 @@ Download an unzip this file [https://github.com/starknet-io/provisions-data/arch
 
 Create a `.env` file similar to the `.env.example` with your own data
 
+RPC_URL: is the url of a starknet url using the 0.5 spec
+ADDRESS: address of the account that will pay for the claim transaction, that's not the STRK receiver
+PRIVATE_KEY: private key of the account above
+
 Paste the list of addresses to claim in `index.ts`
 
 then run

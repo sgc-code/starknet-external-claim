@@ -150,7 +150,8 @@ for (const accountsEligibilityDataChunk of splitIntoChunks(accountsEligibilityDa
     console.log('estimate:', estimate.overall_fee);
 
     const txHash = (await relayer.execute(calls)).transaction_hash;
-    console.log('send tx hash:', txHash);
+    console.log('sent tx hash:', txHash);
+    console.log('waiting for transaction to complete...';
     const receipt = await provider.waitForTransaction(txHash);
     console.log('tx included:', receipt.execution_status);
     if (receipt.execution_status !== "SUCCEEDED") {
