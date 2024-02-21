@@ -1,23 +1,25 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as xmulticall from "@argent/x-multicall";
+import { CallData, RpcProvider, uint256, Account, Call, InvokeFunctionResponse } from "starknet";
+import dotenv from "dotenv";
+
+const addresses = [
+    "0x"
+].map(address => address.toLowerCase());
+const maxClaimMulticallSize = 30;
+
+dotenv.config({ override: true });
+
+if (new Set(addresses).size !== addresses.length) {
+    throw new Error('Duplicate addresses found');
+}
 
 const provisionDataPath = path.join('provisions-data/starknet/');
 
 if (!fs.existsSync(provisionDataPath)) {
     throw new Error('Provision data not found, Take a look at the README.md file.');
 }
-
-const maxMulticallSize = 3;
-const addresses = [
-    "0x03dd8956d65db3a3f414ab0c716b46f522c730ed07235721df1831ea59d2cd0d",
-    "0x055582a93cd6819e36a4f92d89f947b23df062f7ebf2f8e4d9ccba98f40ac4b8",
-    "0x03dd8956d65db3a3f414ab0c716b46f522c730ed07235721df1831ea59d2cd0d",
-    "0x055582a93cd6819e36a4f92d89f947b23df062f7ebf2f8e4d9ccba98f40ac4b8",
-    "0x03dd8956d65db3a3f414ab0c716b46f522c730ed07235721df1831ea59d2cd0d",
-    "0x055582a93cd6819e36a4f92d89f947b23df062f7ebf2f8e4d9ccba98f40ac4b8",
-    "0x03dd8956d65db3a3f414ab0c716b46f522c730ed07235721df1831ea59d2cd0d",
-    "0x055582a93cd6819e36a4f92d89f947b23df062f7ebf2f8e4d9ccba98f40ac4b8",
-];
 
 function findAccountAddress(accountAddress: string) {
     // count files in folder
@@ -36,6 +38,8 @@ function findAccountAddress(accountAddress: string) {
     }
     return null;
 }
+
+console.log('finding claim data... ');
 
 const nonEligibleAccount: string[] = [];
 const accountsEligibilityData = addresses.map(address => {
@@ -59,5 +63,82 @@ function splitIntoChunks<T>(array: T[], maxSize: number): T[][] {
     return chunks;
 }
 
-const accountsEligibilityDataChunks = splitIntoChunks(accountsEligibilityData, maxMulticallSize);
-console.log('accountsEligibilityDataChunks:', accountsEligibilityDataChunks);
+const address = process.env.ADDRESS as string;
+const privateKey = process.env.PRIVATE_KEY as string;
+const rpcUrl = process.env.RPC_URL as string;
+const provider = new RpcProvider({ nodeUrl: rpcUrl });
+const readBatchingSize = 50
+
+function getCallData(accountData: any) {
+    return CallData.compile({
+        identity: accountData.identity,
+        balance: uint256.bnToUint256(BigInt(accountData.amount) * 10n ** 18n),
+        index: accountData.merkle_index,
+        merkle_path: accountData.merkle_path
+    })
+}
+
+console.log('validating eligibility... ');
+const invalidClaimAddresses: string[] = [];
+const alreadyClaimedAddresses: string[] = [];
+for (const accountsEligibilityDataChunk of splitIntoChunks(accountsEligibilityData, readBatchingSize)) {
+    const batchingProvider = xmulticall.getBatchProvider(provider, { maxBatchSize: readBatchingSize });
+    const promises = accountsEligibilityDataChunk.map(async (accountData) => {
+        const calldata = getCallData(accountData);
+        const call = {
+            contractAddress: accountData.contract_address,
+            entrypoint: "is_claimable",
+            calldata
+        };
+        return batchingProvider.callContract(call)
+    });
+    (await Promise.all(promises)).forEach((result, index) => {
+        const account = accountsEligibilityDataChunk[index].identity;
+        const resultValue = result.result[0];
+        switch (resultValue) {
+            case "0x0":
+                // all good
+                break;
+            case "0x2":
+                console.log("invalid claim for account:", account, "error: already claimed");
+                alreadyClaimedAddresses.push(account);
+                break;
+            default:
+                console.log("invalid claim for account:", account, "error:", resultValue);
+                invalidClaimAddresses.push(account);
+                break;
+        }
+    });
+};
+
+if (alreadyClaimedAddresses.length > 0) {
+    console.log('Already claimed addresses:', alreadyClaimedAddresses);
+    throw new Error('Some accounts are already claimed');
+}
+
+if (invalidClaimAddresses.length > 0) {
+    console.log('Invalid claim addresses:', invalidClaimAddresses);
+    throw new Error('Some accounts claims are invalid');
+}
+
+const relayer = new Account(provider, address, privateKey);
+for (const accountsEligibilityDataChunk of splitIntoChunks(accountsEligibilityData, maxClaimMulticallSize)) {
+    console.log('claiming for accounts:', accountsEligibilityDataChunk.map(account => account.identity));
+    const calls = accountsEligibilityDataChunk.map((accountData) => {
+        return {
+            contractAddress: accountData.contract_address,
+            entrypoint: "claim",
+            calldata: getCallData(accountData)
+        };
+    });
+    const estimate = await relayer.estimateInvokeFee(calls);
+    console.log('estimate:', estimate.overall_fee);
+
+    const txHash = (await relayer.execute(calls)).transaction_hash;
+    console.log('send tx hash:', txHash);
+    const receipt = await provider.waitForTransaction(txHash);
+    console.log('tx included:', receipt.execution_status);
+    if (receipt.execution_status !== "SUCCEEDED") {
+        throw new Error("Transaction didn't succeed, stopping");
+    }
+};
